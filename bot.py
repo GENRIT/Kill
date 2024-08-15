@@ -31,7 +31,9 @@ def generate_gemini_text():
     prompt = random.choice(prompts)
     
     payload = {
-        "contents": [{"parts":[{"text": prompt}]}]
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
     }
     
     headers = {
@@ -60,12 +62,12 @@ def add_text_to_image(image_path, topic, text):
         
         # Размер изображения и текста
         width, height = image.size
-        text_width, text_height = draw.textsize(text, font=font)
-        topic_width, topic_height = draw.textsize(topic, font=font)
+        text_width, _ = draw.textsize(text, font=font)
+        topic_width, _ = draw.textsize(topic, font=font)
         
         # Позиция текста на изображении
         text_x = (width - text_width) // 2
-        text_y = height - text_height - 10  # Смещение вниз на 10 пикселей от нижнего края
+        text_y = height - 50  # 50 пикселей от нижнего края
         
         topic_x = (width - topic_width) // 2
         topic_y = 10  # 10 пикселей от верхнего края
