@@ -31,9 +31,7 @@ def generate_gemini_text():
     prompt = random.choice(prompts)
     
     payload = {
-        "prompt": prompt,
-        "temperature": 0.7,
-        "maxOutputTokens": 60
+        "contents": [{"parts":[{"text": prompt}]}]
     }
     
     headers = {
@@ -45,7 +43,7 @@ def generate_gemini_text():
     
     if response.status_code == 200:
         result = response.json()
-        return result['candidates'][0]['output']
+        return result['candidates'][0]['content']['parts'][0]['text']
     else:
         logging.error(f"Ошибка при обращении к Gemini API: {response.status_code} - {response.text}")
         return "Ошибка при генерации текста."
