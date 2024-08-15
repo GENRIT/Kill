@@ -2,6 +2,7 @@ import telebot
 import requests
 import time
 import logging
+import random
 from PIL import Image, ImageDraw, ImageFont
 import os
 
@@ -16,8 +17,9 @@ bot = telebot.TeleBot(API_KEY)
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Флаг для контроля работы бота
 publishing = False
+interval = 15  # Интервал публикации по умолчанию
+cached_image_path = None  # Кэшированное изображение
 
 def generate_gemini_text():
     prompts = [
@@ -95,32 +97,28 @@ def delete_temp_files(*files):
                 logging.error(f"Ошибка при удалении файла {file}: {e}")
 
 def publish_post():
+    global cached_image_path
     try:
         # Генерация текста через API Gemini
         text = generate_gemini_text()
         
-        # Скачивание изображения
-        image_url = 'https://graph.org/file/0024dfb620c1075941d00.jpg'
-        image_path = "image.jpg"
-        response = requests.get(image_url)
-        with open(image_path, 'wb') as f:
-            f.write(response.content)
-        
-        # Добавление текста на изображение
-        output_image_path = add_text_to_image(image_path, text)
-        
-        # Публикация в личку и получение ID сообщения
-        if output_image_path:
-            with open(output_image_path, 'rb') as photo:
-                sent_message = bot.send_photo(USER_ID, photo, caption=text)
+        # Использование кэшированного изображения
+        if cached_image_path:
+            output_image_path = add_text_to_image(cached_image_path, text)
             
-            # Пересылка сообщения в канал
-            bot.forward_message(CHANNEL_ID, USER_ID, sent_message.message_id)
+            if output_image_path:
+                with open(output_image_path, 'rb') as photo:
+                    sent_message = bot.send_photo(USER_ID, photo, caption=text)
+                
+                # Пересылка сообщения в канал
+                bot.forward_message(CHANNEL_ID, USER_ID, sent_message.message_id)
+            else:
+                bot.send_message(USER_ID, text)
+            
+            # Удаление временных файлов
+            delete_temp_files(output_image_path)
         else:
-            bot.send_message(USER_ID, text)
-        
-        # Удаление временных файлов
-        delete_temp_files(image_path, output_image_path)
+            bot.send_message(USER_ID, "Пожалуйста, загрузите изображение для публикации.")
         
     except Exception as e:
         logging.error(f"Ошибка при публикации поста: {e}")
@@ -134,7 +132,7 @@ def start_publishing(message):
         bot.send_message(USER_ID, "Публикация постов запущена.")
         while publishing:
             publish_post()
-            time.sleep(15)
+            time.sleep(interval)
 
 @bot.message_handler(commands=['stop'])
 def stop_publishing(message):
@@ -142,6 +140,47 @@ def stop_publishing(message):
     if message.chat.id == int(USER_ID):
         publishing = False
         bot.send_message(USER_ID, "Публикация постов остановлена.")
+
+@bot.message_handler(commands=['publish'])
+def manual_publish(message):
+    if message.chat.id == int(USER_ID):
+        publish_post()
+
+@bot.message_handler(commands=['set_interval'])
+def set_interval(message):
+    global interval
+    if message.chat.id == int(USER_ID):
+        try:
+            new_interval = int(message.text.split()[1])
+            interval = new_interval
+            bot.send_message(USER_ID, f"Интервал публикации установлен на {interval} секунд.")
+        except Exception as e:
+            bot.send_message(USER_ID, "Неверный формат команды. Используйте: /set_interval <секунды>")
+
+@bot.message_handler(commands=['clear_cache'])
+def clear_cache(message):
+    global cached_image_path
+    if message.chat.id == int(USER_ID):
+        delete_temp_files(cached_image_path)
+        cached_image_path = None
+        bot.send_message(USER_ID, "Кэш изображений очищен.")
+
+@bot.message_handler(content_types=['photo'])
+def handle_image(message):
+    global cached_image_path
+    if message.chat.id == int(USER_ID):
+        try:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            cached_image_path = "cached_image.jpg"
+            
+            with open(cached_image_path, 'wb') as new_file:
+                new_file.write(downloaded_file)
+            
+            bot.send_message(USER_ID, "Изображение получено и сохранено. Вы можете начать публикацию.")
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении изображения: {e}")
+            bot.send_message(USER_ID, f"Ошибка при сохранении изображения: {e}")
 
 if __name__ == "__main__":
     bot.polling(none_stop=True)
