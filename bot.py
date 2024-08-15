@@ -9,6 +9,7 @@ API_KEY = '7416204500:AAHfx67vXqCgcrwpp2uzoXEIvC2fwiQSp5o'
 GEMINI_API_KEY = 'AIzaSyD5UcnXASfVpUa6UElDxYqZU6hxxwttj5M'
 GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent'
 CHANNEL_ID = '1803184345'  # Замените на ID вашего канала
+USER_ID = '1420106372'  # Замените на ваш личный ID
 
 bot = telebot.TeleBot(API_KEY)
 
@@ -86,9 +87,12 @@ def publish_post():
         
         output_image_path = add_text_to_image(image_path, text)
         
-        # Публикация в Telegram канал
+        # Публикация в личку и получение ID сообщения
         with open(output_image_path, 'rb') as photo:
-            bot.send_photo(CHANNEL_ID, photo, caption=text)
+            sent_message = bot.send_photo(USER_ID, photo, caption=text)
+        
+        # Пересылка сообщения в канал
+        bot.forward_message(CHANNEL_ID, USER_ID, sent_message.message_id)
         
         # Удаление временных файлов
         os.remove(image_path)
