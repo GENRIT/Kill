@@ -50,7 +50,7 @@ def generate_gemini_text():
         logging.error(f"Ошибка при обращении к Gemini API: {response.status_code} - {response.text}")
         return "Ошибка при генерации текста."
 
-def add_text_to_image(image_path, text):
+def add_text_to_image(image_path, topic, text):
     try:
         image = Image.open(image_path)
         draw = ImageDraw.Draw(image)
@@ -63,19 +63,29 @@ def add_text_to_image(image_path, text):
         # Размер изображения и текста
         width, height = image.size
         text_width, text_height = draw.textsize(text, font=font)
+        topic_width, topic_height = draw.textsize(topic, font=font)
         
-        # Позиция текста на изображении (по центру)
+        # Позиция текста на изображении
         text_x = (width - text_width) // 2
-        text_y = (height - text_height) // 2
+        text_y = height - text_height - 10  # Смещение вниз на 10 пикселей от нижнего края
+        
+        topic_x = (width - topic_width) // 2
+        topic_y = 10  # 10 пикселей от верхнего края
         
         # Цвет текста и обводка
         outline_color = "black"
+        # Тема сверху
+        draw.text((topic_x-2, topic_y-2), topic, font=font, fill=outline_color)
+        draw.text((topic_x+2, topic_y-2), topic, font=font, fill=outline_color)
+        draw.text((topic_x-2, topic_y+2), topic, font=font, fill=outline_color)
+        draw.text((topic_x+2, topic_y+2), topic, font=font, fill=outline_color)
+        draw.text((topic_x, topic_y), topic, font=font, fill="white")
+        
+        # Основной текст снизу
         draw.text((text_x-2, text_y-2), text, font=font, fill=outline_color)
         draw.text((text_x+2, text_y-2), text, font=font, fill=outline_color)
         draw.text((text_x-2, text_y+2), text, font=font, fill=outline_color)
         draw.text((text_x+2, text_y+2), text, font=font, fill=outline_color)
-        
-        # Основной текст
         draw.text((text_x, text_y), text, font=font, fill="white")
         
         # Сохранение нового изображения
@@ -101,10 +111,11 @@ def publish_post():
     try:
         # Генерация текста через API Gemini
         text = generate_gemini_text()
+        topic = "Тема публикации"  # Задайте тему
         
         # Использование кэшированного изображения
         if cached_image_path:
-            output_image_path = add_text_to_image(cached_image_path, text)
+            output_image_path = add_text_to_image(cached_image_path, topic, text)
             
             if output_image_path:
                 with open(output_image_path, 'rb') as photo:
