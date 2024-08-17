@@ -1,221 +1,167 @@
 import telebot
-from github import Github
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-import re
-import base64
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import requests
+import logging
+import time
+import os
+from collections import defaultdict
 
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+API_KEY = '7147982361:AAGL-P3mQ7ETcK5qBu3LwRVINnLAT9gMISw'
+GEMINI_API_KEY = 'AIzaSyD5UcnXASfVpUa6UElDxYqZU6hxxwttj5M'
+GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent'
 
-BOT_TOKEN = '7416204500:AAHfx67vXqCgcrwpp2uzoXEIvC2fwiQSp5o'
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(API_KEY)
+user_count = set()
+user_request_count = defaultdict(int)
+request_limit = 5
 
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)
-    github_token = db.Column(db.String(100), nullable=False)
-    telegram_id = db.Column(db.Integer, unique=True, nullable=True)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelnom) - %(message)s')
 
-with app.app_context():
-    db.create_all()
+ADDITIONAL_TEXT_PRIVATE = (
+    "Я твой хладнокровный ассистент по текстур пакам, РП и модификациям для Minecraft. "
+    "Не размениваюсь на болтовню. Вопросы – коротко и по делу. "
+    "Вся информация по проекту в Telegram @tominecraft и на сайте OxyMod (Oxymod.netlify.app). "
+    "Для рекламы или других вопросов пиши напрямую в бота @OxyMod_bot. "
+    "Минимум слов – максимум конкретики."
+)
+
+def create_ad_watch_link(user_id):
+    # Генерация уникальной ссылки с идентификатором пользователя
+    unique_url = f"https://oxymod.netlify.app/ads?user_id={user_id}"
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("Смотреть рекламу", url=unique_url))
+    return keyboard
 
 @bot.message_handler(commands=['start'])
-def start(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if user:
-        bot.reply_to(message, f"Welcome back, {user.username}! Your GitHub bot is ready to use. Type /help for available commands.")
-    else:
-        bot.reply_to(message, "Welcome! Please register on our website to use the GitHub bot. After registration, use /link command to connect your account.")
+def send_welcome(message):
+    if message.chat.type != 'private':
+        return
+    user_count.add(message.from_user.id)
+    bot.reply_to(message, "Я Камилла. Вопросы по делу – отвечу. Всё, что нужно – получишь без лишних слов.")
 
-@bot.message_handler(commands=['link'])
-def link_account(message):
-    args = message.text.split()[1:]
-    if len(args) != 2:
-        bot.reply_to(message, "Usage: /link <username> <password>")
+@bot.message_handler(commands=['stats'])
+def send_stats(message):
+    if message.chat.type != 'private':
+        return
+    bot.reply_to(message, f"Количество уникальных пользователей: {len(user_count)}")
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    if message.chat.type != 'private':
+        return
+    user_count.add(message.from_user.id)
+
+    if user_request_count[message.from_user.id] >= request_limit:
+        bot.reply_to(message, "Превышен лимит запросов. Чтобы продолжить, посмотри рекламу.", reply_markup=create_ad_watch_link(message.from_user.id))
         return
 
-    username, password = args
-    user = User.query.filter_by(username=username).first()
-    if user and user.password == password:
-        user.telegram_id = message.from_user.id
-        db.session.commit()
-        bot.reply_to(message, f"Account linked successfully! Welcome, {username}. Type /help for available commands.")
-    else:
-        bot.reply_to(message, "Invalid username or password.")
+    file_id = message.photo[-1].file_id
+    file_info = bot.get_file(file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
 
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    help_text = """
-Available commands:
-/repos - List your GitHub repositories
-/issues <repo_name> - List open issues in a repository
-/create_issue <repo_name> <title> <body> - Create a new issue
-/branches <repo_name> - List branches in a repository
-/commits <repo_name> <branch_name> - List recent commits in a branch
-/file <repo_name> <file_path> - View contents of a file
-/search <query> - Search your repositories
-    """
-    bot.reply_to(message, help_text)
+    image_path = f"temp_{file_id}.jpg"
+    with open(image_path, 'wb') as new_file:
+        new_file.write(downloaded_file)
 
-@bot.message_handler(commands=['repos'])
-def list_repos(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
+    response = get_gemini_image_response(image_path)
 
-    g = Github(user.github_token)
-    repos = g.get_user().get_repos()
-    repo_list = [f"• {repo.name}" for repo in repos]
-    response = "Your repositories:\n" + "\n".join(repo_list)
+    os.remove(image_path)
+
     bot.reply_to(message, response)
-
-@bot.message_handler(commands=['issues'])
-def list_issues(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
-
-    args = message.text.split()[1:]
-    if len(args) != 1:
-        bot.reply_to(message, "Usage: /issues <repo_name>")
-        return
-
-    repo_name = args[0]
-    g = Github(user.github_token)
-    try:
-        repo = g.get_user().get_repo(repo_name)
-        issues = repo.get_issues(state='open')
-        issue_list = [f"#{issue.number}: {issue.title}" for issue in issues]
-        response = f"Open issues in {repo_name}:\n" + "\n".join(issue_list) if issue_list else f"No open issues in {repo_name}"
-        bot.reply_to(message, response)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}")
-
-@bot.message_handler(commands=['create_issue'])
-def create_issue(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
-
-    args = message.text.split(maxsplit=3)[1:]
-    if len(args) != 3:
-        bot.reply_to(message, "Usage: /create_issue <repo_name> <title> <body>")
-        return
-
-    repo_name, title, body = args
-    g = Github(user.github_token)
-    try:
-        repo = g.get_user().get_repo(repo_name)
-        issue = repo.create_issue(title=title, body=body)
-        bot.reply_to(message, f"Issue created successfully. Issue #{issue.number}: {issue.title}")
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}")
-
-@bot.message_handler(commands=['branches'])
-def list_branches(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
-
-    args = message.text.split()[1:]
-    if len(args) != 1:
-        bot.reply_to(message, "Usage: /branches <repo_name>")
-        return
-
-    repo_name = args[0]
-    g = Github(user.github_token)
-    try:
-        repo = g.get_user().get_repo(repo_name)
-        branches = repo.get_branches()
-        branch_list = [f"• {branch.name}" for branch in branches]
-        response = f"Branches in {repo_name}:\n" + "\n".join(branch_list)
-        bot.reply_to(message, response)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}")
-
-@bot.message_handler(commands=['commits'])
-def list_commits(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
-
-    args = message.text.split()[1:]
-    if len(args) != 2:
-        bot.reply_to(message, "Usage: /commits <repo_name> <branch_name>")
-        return
-
-    repo_name, branch_name = args
-    g = Github(user.github_token)
-    try:
-        repo = g.get_user().get_repo(repo_name)
-        commits = repo.get_commits(sha=branch_name)
-        commit_list = [f"• {commit.sha[:7]}: {commit.commit.message.split()[0]}" for commit in commits[:5]]
-        response = f"Recent commits in {repo_name}/{branch_name}:\n" + "\n".join(commit_list)
-        bot.reply_to(message, response)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}")
-
-@bot.message_handler(commands=['file'])
-def view_file(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
-
-    args = message.text.split(maxsplit=2)[1:]
-    if len(args) != 2:
-        bot.reply_to(message, "Usage: /file <repo_name> <file_path>")
-        return
-
-    repo_name, file_path = args
-    g = Github(user.github_token)
-    try:
-        repo = g.get_user().get_repo(repo_name)
-        content = repo.get_contents(file_path)
-        file_content = base64.b64decode(content.content).decode('utf-8')
-        response = f"Contents of {file_path}:\n\n```\n{file_content[:1000]}```"
-        if len(file_content) > 1000:
-            response += "\n... (truncated)"
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}")
-
-@bot.message_handler(commands=['search'])
-def search_repos(message):
-    user = User.query.filter_by(telegram_id=message.from_user.id).first()
-    if not user:
-        bot.reply_to(message, "Please link your account first using /link <username> <password>")
-        return
-
-    args = message.text.split(maxsplit=1)[1:]
-    if len(args) != 1:
-        bot.reply_to(message, "Usage: /search <query>")
-        return
-
-    query = args[0]
-    g = Github(user.github_token)
-    try:
-        repos = g.search_repositories(query=f"user:{g.get_user().login} {query}")
-        repo_list = [f"• {repo.name}: {repo.description}" for repo in repos[:5]]
-        response = f"Search results for '{query}':\n" + "\n".join(repo_list)
-        if not repo_list:
-            response = f"No repositories found matching '{query}'"
-        bot.reply_to(message, response)
-    except Exception as e:
-        bot.reply_to(message, f"Error: {str(e)}")
+    user_request_count[message.from_user.id] += 1
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    bot.reply_to(message, "I don't understand that command. Type /help for a list of available commands.")
+    if message.chat.type != 'private':
+        return
 
-if __name__ == '__main__':
-    bot.polling()
+    user_id = message.from_user.id
+    user_count.add(user_id)
+
+    if user_request_count[user_id] >= request_limit:
+        bot.reply_to(message, "Превышен лимит запросов. Чтобы продолжить, посмотри рекламу.", reply_markup=create_ad_watch_link(user_id))
+        return
+
+    bot.send_chat_action(message.chat.id, 'record_video_note')
+
+    user_text = message.text.lower()
+
+    response = get_gemini_response(user_text, ADDITIONAL_TEXT_PRIVATE)
+    bot.reply_to(message, response)
+    user_request_count[user_id] += 1
+
+@bot.message_handler(commands=['ad_watched'])
+def handle_ad_watched(message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if user_id in user_request_count:
+        user_request_count[user_id] = max(0, user_request_count[user_id] - 5)
+        bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен.")
+
+def get_gemini_response(question, additional_text):
+    combined_message = f"{question}\n\n{additional_text}"
+
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": combined_message
+            }]
+        }]
+    }
+    headers = {
+        'Content-Type': 'application/json',
+    }
+    try:
+        response = requests.post(f'{GEMINI_API_URL}?key={GEMINI_API_KEY}', json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        result = data['candidates'][0]['content']['parts'][0]['text']
+
+        if result.endswith('.'):
+            result = result[:-1]
+
+        return result
+    except Exception as e:
+        logging.error(f"Ошибка при обращении к Gemini API: {e}")
+        return "Ошибка при обработке запроса."
+
+def get_gemini_image_response(image_path):
+    with open(image_path, 'rb') as image_file:
+        image_data = image_file.read()
+
+    headers = {
+        'Content-Type': 'application/json',
+    }
+    payload = {
+        'requests': [
+            {
+                'image': {
+                    'content': image_data
+                },
+                'features': [
+                    {
+                        'type': 'LABEL_DETECTION',
+                    }
+                ],
+            }
+        ]
+    }
+    try:
+        response = requests.post(f'{GEMINI_API_URL}?key={GEMINI_API_KEY}', json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        labels = data['responses'][0]['labelAnnotations']
+        label_descriptions = [label['description'] for label in labels]
+        return f"На изображении вижу: {', '.join(label_descriptions)}"
+    except Exception as e:
+        logging.error(f"Ошибка при обработке изображения через Gemini API: {e}")
+        return "Ошибка при обработке изображения."
+
+if __name__ == "__main__":
+    while True:
+        try:
+            bot.polling(none_stop=True)
+        except Exception as e:
+            logging.error(f"Ошибка в основном цикле: {e}")
+            time.sleep(15)
