@@ -1,4 +1,3 @@
-import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import requests
 import logging
@@ -51,7 +50,7 @@ def handle_photo(message):
     user_count.add(message.from_user.id)
 
     if user_request_count[message.from_user.id] >= request_limit:
-        bot.reply_to(message, "Превышен лимит запросов. Чтобы продолжить, посмотри рекламу.", reply_markup=create_ad_watch_link(message.from_user.id))
+        bot.reply_to(message, "Достигнут лимит запросов. Чтобы получить еще 5 запросов, посмотрите рекламу.", reply_markup=create_ad_watch_link(message.from_user.id))
         return
 
     file_id = message.photo[-1].file_id
@@ -74,8 +73,8 @@ def handle_ad_watched(message):
     if message.chat.type != 'private':
         return
     user_id = message.from_user.id
-    user_request_count[user_id] = max(0, user_request_count[user_id] - 5)
-    bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен на 5.")
+    user_request_count[user_id] = 0  # Сбрасываем счетчик запросов до 0
+    bot.reply_to(message, "Реклама просмотрена. Вам доступно 5 новых запросов.")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -86,7 +85,7 @@ def handle_message(message):
     user_count.add(user_id)
 
     if user_request_count[user_id] >= request_limit:
-        bot.reply_to(message, "Превышен лимит запросов. Чтобы продолжить, посмотри рекламу.", reply_markup=create_ad_watch_link(user_id))
+        bot.reply_to(message, "Достигнут лимит запросов. Чтобы получить еще 5 запросов, посмотрите рекламу.", reply_markup=create_ad_watch_link(user_id))
         return
 
     bot.send_chat_action(message.chat.id, 'typing')
