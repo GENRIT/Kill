@@ -95,7 +95,10 @@ def handle_ad_watched(message):
         return
     user_id = message.from_user.id
     if user_id in user_request_count:
-        user_request_count[user_id] = max(0, user_request_count[user_id] - 5)
+        # Добавляем 5 дополнительных запросов к лимиту
+        user_request_count[user_id] -= 5
+        if user_request_count[user_id] < 0:
+            user_request_count[user_id] = 0
         bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен на 5.")
     else:
         bot.reply_to(message, "Ваш лимит запросов уже был обновлен.")
