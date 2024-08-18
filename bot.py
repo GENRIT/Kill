@@ -69,6 +69,14 @@ def handle_photo(message):
     bot.reply_to(message, response)
     user_request_count[message.from_user.id] += 1
 
+@bot.message_handler(func=lambda message: message.text.lower() == 'ad_watched')
+def handle_ad_watched(message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    user_request_count[user_id] = max(0, user_request_count[user_id] - 5)
+    bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен на 5.")
+
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     if message.chat.type != 'private':
@@ -88,20 +96,6 @@ def handle_message(message):
     response = get_gemini_response(user_text, ADDITIONAL_TEXT_PRIVATE)
     bot.reply_to(message, response)
     user_request_count[user_id] += 1
-
-@bot.message_handler(func=lambda message: message.text.lower() == 'ad_watched')
-def handle_ad_watched(message):
-    if message.chat.type != 'private':
-        return
-    user_id = message.from_user.id
-    if user_id in user_request_count:
-        # Добавляем 5 дополнительных запросов к лимиту
-        user_request_count[user_id] -= 5
-        if user_request_count[user_id] < 0:
-            user_request_count[user_id] = 0
-        bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен на 5.")
-    else:
-        bot.reply_to(message, "Ваш лимит запросов уже был обновлен.")
 
 def get_gemini_response(question, additional_text):
     combined_message = f"{question}\n\n{additional_text}"
