@@ -8,7 +8,7 @@ from collections import defaultdict
 
 API_KEY = '7147982361:AAGL-P3mQ7ETcK5qBu3LwRVINnLAT9gMISw'
 GEMINI_API_KEY = 'AIzaSyD5UcnXASfVpUa6UElDxYqZU6hxxwttj5M'
-GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent'
+GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateText'  # Исправлено на generateText
 
 bot = telebot.TeleBot(API_KEY)
 user_count = set()
@@ -104,9 +104,9 @@ def get_gemini_response(question, additional_text):
     combined_message = f"{question}\n\n{additional_text}"
 
     payload = {
-        "prompt": {
-            "text": combined_message
-        }
+        "prompt": combined_message,
+        "temperature": 0.7,
+        "maxOutputTokens": 256,
     }
     headers = {
         'Content-Type': 'application/json',
@@ -115,7 +115,7 @@ def get_gemini_response(question, additional_text):
         response = requests.post(f'{GEMINI_API_URL}?key={GEMINI_API_KEY}', json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
-        result = data['candidates'][0]['content']
+        result = data['candidates'][0]['output']
 
         return result
     except Exception as e:
@@ -123,36 +123,8 @@ def get_gemini_response(question, additional_text):
         return "Ошибка при обработке запроса."
 
 def get_gemini_image_response(image_path):
-    with open(image_path, 'rb') as image_file:
-        image_data = image_file.read()
-
-    headers = {
-        'Content-Type': 'application/json',
-    }
-    payload = {
-        'requests': [
-            {
-                'image': {
-                    'content': image_data
-                },
-                'features': [
-                    {
-                        'type': 'LABEL_DETECTION',
-                    }
-                ],
-            }
-        ]
-    }
-    try:
-        response = requests.post(f'{GEMINI_API_URL}?key={GEMINI_API_KEY}', json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        labels = data['responses'][0]['labelAnnotations']
-        label_descriptions = [label['description'] for label in labels]
-        return f"На изображении вижу: {', '.join(label_descriptions)}"
-    except Exception as e:
-        logging.error(f"Ошибка при обработке изображения через Gemini API: {e}")
-        return "Ошибка при обработке изображения."
+    # Так как Google Gemini не поддерживает прямую обработку изображений, здесь пример замены на другой сервис или удаление функции.
+    return "Функция обработки изображений временно недоступна."
 
 if __name__ == "__main__":
     while True:
