@@ -15,7 +15,7 @@ user_count = set()
 user_request_count = defaultdict(int)
 request_limit = 5
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelnom) - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 ADDITIONAL_TEXT_PRIVATE = (
     "Я твой хладнокровный ассистент по текстур пакам, РП и модификациям для Minecraft. "
@@ -26,7 +26,6 @@ ADDITIONAL_TEXT_PRIVATE = (
 )
 
 def create_ad_watch_link(user_id):
-    # Генерация уникальной ссылки с идентификатором пользователя
     unique_url = f"https://oxymod.netlify.app/ads?user_id={user_id}"
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("Смотреть рекламу", url=unique_url))
@@ -82,7 +81,7 @@ def handle_message(message):
         bot.reply_to(message, "Превышен лимит запросов. Чтобы продолжить, посмотри рекламу.", reply_markup=create_ad_watch_link(user_id))
         return
 
-    bot.send_chat_action(message.chat.id, 'record_video_note')
+    bot.send_chat_action(message.chat.id, 'typing')
 
     user_text = message.text.lower()
 
@@ -90,14 +89,16 @@ def handle_message(message):
     bot.reply_to(message, response)
     user_request_count[user_id] += 1
 
-@bot.message_handler(commands=['ad_watched'])
+@bot.message_handler(func=lambda message: message.text.startswith('/ad_watched'))
 def handle_ad_watched(message):
     if message.chat.type != 'private':
         return
     user_id = message.from_user.id
     if user_id in user_request_count:
         user_request_count[user_id] = max(0, user_request_count[user_id] - 5)
-        bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен.")
+        bot.reply_to(message, "Реклама просмотрена. Лимит запросов увеличен на 5.")
+    else:
+        bot.reply_to(message, "Ваш лимит запросов уже был обновлен.")
 
 def get_gemini_response(question, additional_text):
     combined_message = f"{question}\n\n{additional_text}"
