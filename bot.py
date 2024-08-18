@@ -104,11 +104,9 @@ def get_gemini_response(question, additional_text):
     combined_message = f"{question}\n\n{additional_text}"
 
     payload = {
-        "contents": [{
-            "parts": [{
-                "text": combined_message
-            }]
-        }]
+        "prompt": {
+            "text": combined_message
+        }
     }
     headers = {
         'Content-Type': 'application/json',
@@ -117,10 +115,7 @@ def get_gemini_response(question, additional_text):
         response = requests.post(f'{GEMINI_API_URL}?key={GEMINI_API_KEY}', json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
-        result = data['candidates'][0]['content']['parts'][0]['text']
-
-        if result.endswith('.'):
-            result = result[:-1]
+        result = data['candidates'][0]['content']
 
         return result
     except Exception as e:
