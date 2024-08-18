@@ -89,7 +89,7 @@ def handle_message(message):
     bot.reply_to(message, response)
     user_request_count[user_id] += 1
 
-@bot.message_handler(func=lambda message: message.text.startswith('/ad_watched'))
+@bot.message_handler(func=lambda message: message.text.lower() == 'ad_watched')
 def handle_ad_watched(message):
     if message.chat.type != 'private':
         return
