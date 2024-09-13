@@ -42,43 +42,20 @@ load_data()
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     logger.debug("Received /start command")
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Рассылка", callback_data="mailing"))
-    markup.row(types.InlineKeyboardButton("Группы", callback_data="groups"))
-    await message.answer("Привет! Выберите действие:", reply_markup=markup)
-    logger.debug("Sent start message with markup")
+    await message.answer("Привет! Для начала работы используйте команды:\n/mailing - Рассылка\n/groups - Группы")
+    logger.debug("Sent start message")
 
-@dp.callback_query_handler(lambda c: True)
-async def callback_query(call: types.CallbackQuery):
-    logger.debug(f"Received callback query with data: {call.data}")
-    if call.data == "mailing":
-        await show_mailing_options(call.message)
-    elif call.data == "groups":
-        await show_groups(call.message)
-    elif call.data.startswith("mailing_"):
-        percentage = call.data.split("_")[1]
-        await ask_for_mailing_text(call.message, percentage)
-    elif call.data == "back":
-        await start(call.message)
-    elif call.data.startswith("group_"):
-        group_id = int(call.data.split("_")[1])
-        await show_group_info(call.message, group_id)
-    elif call.data == "start_mailing":
-        await select_group_for_mailing(call.message)
-    elif call.data.startswith("select_group_"):
-        group_id = int(call.data.split("_")[2])
-        await start_mailing(call.message, group_id)
-
+@dp.message_handler(commands=['mailing'])
 async def show_mailing_options(message: types.Message):
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Всем", callback_data="mailing_100"))
-    markup.row(types.InlineKeyboardButton("50%", callback_data="mailing_50"))
-    markup.row(types.InlineKeyboardButton("10%", callback_data="mailing_10"))
-    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await message.edit_text("Выберите получателей рассылки:", reply_markup=markup)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("Всем", "50%", "10%")
+    markup.row("🔙 Назад")
+    await message.answer("Выберите получателей рассылки:", reply_markup=markup)
 
-async def ask_for_mailing_text(message: types.Message, percentage: str):
-    await message.edit_text(f"Введите текст для рассылки {percentage}% участников:")
+@dp.message_handler(lambda message: message.text in ["Всем", "50%", "10%"])
+async def ask_for_mailing_text(message: types.Message):
+    percentage = "100" if message.text == "Всем" else message.text.replace("%", "")
+    await message.answer(f"Введите текст для рассылки {percentage}% участников:")
     await dp.current_state(user=message.chat.id).set_state('waiting_for_mailing_text')
     await dp.current_state(user=message.chat.id).update_data(percentage=percentage)
 
@@ -93,19 +70,22 @@ async def process_mailing_text(message: types.Message, state: FSMContext):
     await show_mailing_actions(message)
 
 async def show_mailing_actions(message: types.Message):
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data="start_mailing"))
-    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("Начать рассылку")
+    markup.row("🔙 Назад")
     await message.answer("Выберите действие:", reply_markup=markup)
 
+@dp.message_handler(lambda message: message.text == "Начать рассылку")
 async def select_group_for_mailing(message: types.Message):
-    markup = types.InlineKeyboardMarkup()
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     for group_id, group_info in groups.items():
-        markup.row(types.InlineKeyboardButton(group_info['title'], callback_data=f"select_group_{group_id}"))
-    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await message.edit_text("Выберите группу для рассылки:", reply_markup=markup)
+        markup.row(group_info['title'])
+    markup.row("🔙 Назад")
+    await message.answer("Выберите группу для рассылки:", reply_markup=markup)
 
-async def start_mailing(message: types.Message, group_id: int):
+@dp.message_handler(lambda message: message.text in [group_info['title'] for group_info in groups.values()])
+async def start_mailing(message: types.Message):
+    group_id = next(gid for gid, ginfo in groups.items() if ginfo['title'] == message.text)
     chat_id = message.chat.id
     if chat_id not in mailing_data:
         await message.answer("Ошибка: данные для рассылки не найдены.")
@@ -145,19 +125,22 @@ async def start_mailing(message: types.Message, group_id: int):
     del mailing_data[chat_id]
     save_data()
 
+@dp.message_handler(commands=['groups'])
 async def show_groups(message: types.Message):
-    markup = types.InlineKeyboardMarkup()
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     for group_id, group_info in groups.items():
-        markup.row(types.InlineKeyboardButton(group_info['title'], callback_data=f"group_{group_id}"))
-    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await message.edit_text("Выберите группу:", reply_markup=markup)
+        markup.row(group_info['title'])
+    markup.row("🔙 Назад")
+    await message.answer("Выберите группу:", reply_markup=markup)
 
-async def show_group_info(message: types.Message, group_id: int):
+@dp.message_handler(lambda message: message.text in [group_info['title'] for group_info in groups.values()])
+async def show_group_info(message: types.Message):
+    group_id = next(gid for gid, ginfo in groups.items() if ginfo['title'] == message.text)
     group_info = groups[group_id]
     info_text = f"Информация о группе:\n\nНазвание: {group_info['title']}\nID: {group_id}\nКоличество участников: {len(group_info['members'])}"
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("🔙 Назад к группам", callback_data="groups"))
-    await message.edit_text(info_text, reply_markup=markup)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("🔙 Назад к группам")
+    await message.answer(info_text, reply_markup=markup)
 
 @dp.my_chat_member_handler()
 async def handle_my_chat_member(message: types.ChatMemberUpdated):
