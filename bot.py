@@ -55,8 +55,6 @@ def callback_query(call):
     elif call.data.startswith("group_"):
         group_id = int(call.data.split("_")[1])
         show_group_info(call.message, group_id)
-    elif call.data == "add_media":
-        ask_for_media(call.message)
     elif call.data == "add_button":
         add_button_to_mailing(call)
     elif call.data == "start_mailing":
@@ -88,7 +86,6 @@ def process_mailing_text(message, percentage):
 def show_mailing_actions(message):
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data="add_button"))
-    markup.row(types.InlineKeyboardButton("Добавить медиа", callback_data="add_media"))
     markup.row(types.InlineKeyboardButton("Предпросмотр", callback_data="preview_post"))
     markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data="start_mailing"))
     markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
@@ -112,39 +109,6 @@ def process_button_info(message):
         bot.send_message(message.chat.id, "Неверный формат. Попробуйте еще раз.")
         add_button_to_mailing(types.CallbackQuery(id="dummy", from_user=message.from_user, message=message, data="add_button"))
 
-def ask_for_media(message):
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Фото", callback_data="media_photo"))
-    markup.row(types.InlineKeyboardButton("Видео", callback_data="media_video"))
-    markup.row(types.InlineKeyboardButton("GIF", callback_data="media_gif"))
-    markup.row(types.InlineKeyboardButton("Стикер", callback_data="media_sticker"))
-    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_mailing"))
-    bot.edit_message_text("Выберите тип медиа для добавления:", message.chat.id, message.message_id, reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("media_"))
-def handle_media_type(call):
-    media_type = call.data.split("_")[1]
-    bot.answer_callback_query(call.id)
-    bot.edit_message_text(f"Отправьте {media_type} для добавления к рассылке:", call.message.chat.id, call.message.message_id)
-    bot.register_next_step_handler(call.message, process_media, media_type)
-
-def process_media(message, media_type):
-    if message.content_type == media_type or (media_type == 'gif' and message.content_type == 'document'):
-        if media_type == 'photo':
-            mailing_data[message.chat.id]["media"] = message.photo[-1].file_id
-        elif media_type == 'video':
-            mailing_data[message.chat.id]["media"] = message.video.file_id
-        elif media_type == 'gif':
-            mailing_data[message.chat.id]["media"] = message.document.file_id
-        elif media_type == 'sticker':
-            mailing_data[message.chat.id]["media"] = message.sticker.file_id
-        save_data()
-        bot.send_message(message.chat.id, f"{media_type.capitalize()} добавлен к рассылке.")
-        show_mailing_actions(message)
-    else:
-        bot.send_message(message.chat.id, f"Пожалуйста, отправьте {media_type}.")
-        ask_for_media(message)
-
 def preview_post(message):
     chat_id = message.chat.id
     if chat_id not in mailing_data:
@@ -154,22 +118,8 @@ def preview_post(message):
     mailing_info = mailing_data[chat_id]
     text = mailing_info["text"]
     markup = mailing_info.get("markup")
-    media = mailing_info.get("media")
 
-    if media:
-        if "photo" in media:
-            bot.send_photo(chat_id, media, caption=text, reply_markup=markup)
-        elif "video" in media:
-            bot.send_video(chat_id, media, caption=text, reply_markup=markup)
-        elif "animation" in media:
-            bot.send_animation(chat_id, media, caption=text, reply_markup=markup)
-        elif "sticker" in media:
-            bot.send_sticker(chat_id, media)
-            if text or markup:
-                bot.send_message(chat_id, text, reply_markup=markup)
-    else:
-        bot.send_message(chat_id, text, reply_markup=markup)
-
+    bot.send_message(chat_id, text, reply_markup=markup)
     show_mailing_actions(message)
 
 def select_group_for_mailing(message):
@@ -189,7 +139,6 @@ def start_mailing(message, group_id):
     percentage = int(mailing_info["percentage"])
     text = mailing_info["text"]
     markup = mailing_info.get("markup")
-    media = mailing_info.get("media")
 
     bot.send_message(chat_id, f"Начинаем рассылку {percentage}% участников в выбранную группу...")
 
@@ -202,20 +151,7 @@ def start_mailing(message, group_id):
         try:
             mention = f"[{user_id}](tg://user?id={user_id})"
             personalized_text = f"{mention}\n\n{text}"
-
-            if media:
-                if "photo" in media:
-                    bot.send_photo(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
-                elif "video" in media:
-                    bot.send_video(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
-                elif "animation" in media:
-                    bot.send_animation(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
-                elif "sticker" in media:
-                    bot.send_sticker(user_id, media)
-                    if personalized_text or markup:
-                        bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
-            else:
-                bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
+            bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
 
@@ -249,45 +185,6 @@ def send_message_to_group(message, group_id):
         bot.send_message(group_id, message.text)
         bot.send_message(message.chat.id, "Сообщение успешно отправлено в группу!")
     except Exception as e:
-        bot.send_message(message.chat.id, f"Ошибка при отправке сообщения в группу: {e}")
+        bot.send_message(message.chat.id, f"Ошибка при отправке сообщения: {e}")
 
-@bot.my_chat_member_handler()
-def handle_my_chat_member(message):
-    if message.new_chat_member.status == 'administrator':
-        group_id = message.chat.id
-        groups[group_id] = {
-            'title': message.chat.title,
-            'members': set(),
-            'owner_id': message.from_user.id
-        }
-        save_data()
-        bot.send_message(message.chat.id, "Спасибо за назначение меня администратором! Я готов к работе.")
-        update_group_members(group_id)
-    elif message.new_chat_member.status == 'member':
-        bot.send_message(message.chat.id, "Для корректной работы мне нужны права администратора.")
-
-def update_group_members(group_id):
-    try:
-        members = bot.get_chat_members_count(group_id)
-        groups[group_id]['members'] = set(range(members))  # Просто для примера, так как мы не можем получить реальные ID
-        save_data()
-    except Exception as e:
-        logger.error(f"Ошибка при обновлении списка участников группы {group_id}: {e}")
-
-@bot.message_handler(content_types=['new_chat_members'])
-def handle_new_chat_members(message):
-    group_id = message.chat.id
-    if group_id in groups:
-        for new_member in message.new_chat_members:
-            groups[group_id]['members'].add(new_member.id)
-        save_data()
-
-@bot.message_handler(content_types=['left_chat_member'])
-def handle_left_chat_member(message):
-    group_id = message.chat.id
-    if group_id in groups:
-        groups[group_id]['members'].discard(message.left_chat_member.id)
-        save_data()
-
-if __name__ == '__main__':
-    bot.polling(none_stop=True)
+bot.polling()
