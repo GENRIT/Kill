@@ -1,28 +1,26 @@
 import os
 import random
 import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters import Text
 import logging
 import pickle
+from telegram import Update, ReplyKeyboardMarkup, ParseMode
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
 
 # Настройка логирования
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Инициализация бота
 TOKEN = '7305892783:AAEPYSCoF2PQuUxdTToS1zlEYvR9yZv4gjs'
-bot = Bot(token=TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
 
 # Словарь для хранения данных о группах
 groups = {}
 
 # Словарь для хранения данных о рассылке
 mailing_data = {}
+
+# Состояния для ConversationHandler
+SELECTING_PERCENTAGE, ENTERING_TEXT, SELECTING_GROUP = range(3)
 
 # Функция для сохранения данных
 def save_data():
@@ -39,81 +37,71 @@ def load_data():
 # Загрузка данных при запуске
 load_data()
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    logger.debug("Received /start command")
-    await message.answer("Привет! Для начала работы используйте команды:\n/mailing - Рассылка\n/groups - Группы")
-    logger.debug("Sent start message")
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text("Привет! Для начала работы используйте команды:\n/mailing - Рассылка\n/groups - Группы")
 
-@dp.message_handler(commands=['mailing'])
-async def show_mailing_options(message: types.Message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("Всем", "50%", "10%")
-    markup.row("🔙 Назад")
-    await message.answer("Выберите получателей рассылки:", reply_markup=markup)
+def show_mailing_options(update: Update, context: CallbackContext) -> int:
+    reply_keyboard = [['Всем', '50%', '10%'], ['🔙 Назад']]
+    update.message.reply_text(
+        "Выберите получателей рассылки:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    return SELECTING_PERCENTAGE
 
-@dp.message_handler(lambda message: message.text in ["Всем", "50%", "10%"])
-async def ask_for_mailing_text(message: types.Message):
-    percentage = "100" if message.text == "Всем" else message.text.replace("%", "")
-    await message.answer(f"Введите текст для рассылки {percentage}% участников:")
-    await dp.current_state(user=message.chat.id).set_state('waiting_for_mailing_text')
-    await dp.current_state(user=message.chat.id).update_data(percentage=percentage)
+def ask_for_mailing_text(update: Update, context: CallbackContext) -> int:
+    text = update.message.text
+    percentage = 100 if text == 'Всем' else int(text.replace('%', ''))
+    context.user_data['percentage'] = percentage
+    update.message.reply_text(f"Введите текст для рассылки {percentage}% участников:")
+    return ENTERING_TEXT
 
-@dp.message_handler(state='waiting_for_mailing_text')
-async def process_mailing_text(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        percentage = data['percentage']
-    mailing_text = message.text
-    mailing_data[message.chat.id] = {"text": mailing_text, "percentage": percentage}
+def process_mailing_text(update: Update, context: CallbackContext) -> int:
+    mailing_text = update.message.text
+    percentage = context.user_data['percentage']
+    mailing_data[update.effective_user.id] = {"text": mailing_text, "percentage": percentage}
     save_data()
-    await state.finish()
-    await show_mailing_actions(message)
+    reply_keyboard = [['Начать рассылку'], ['🔙 Назад']]
+    update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    return SELECTING_GROUP
 
-async def show_mailing_actions(message: types.Message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("Начать рассылку")
-    markup.row("🔙 Назад")
-    await message.answer("Выберите действие:", reply_markup=markup)
+def select_group_for_mailing(update: Update, context: CallbackContext) -> int:
+    reply_keyboard = [[group_info['title'] for group_id, group_info in groups.items()], ['🔙 Назад']]
+    update.message.reply_text(
+        "Выберите группу для рассылки:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    return ConversationHandler.END
 
-@dp.message_handler(lambda message: message.text == "Начать рассылку")
-async def select_group_for_mailing(message: types.Message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for group_id, group_info in groups.items():
-        markup.row(group_info['title'])
-    markup.row("🔙 Назад")
-    await message.answer("Выберите группу для рассылки:", reply_markup=markup)
-
-@dp.message_handler(lambda message: message.text in [group_info['title'] for group_info in groups.values()])
-async def start_mailing(message: types.Message):
-    group_id = next(gid for gid, ginfo in groups.items() if ginfo['title'] == message.text)
-    chat_id = message.chat.id
-    if chat_id not in mailing_data:
-        await message.answer("Ошибка: данные для рассылки не найдены.")
+async def start_mailing(update: Update, context: CallbackContext) -> None:
+    group_title = update.message.text
+    group_id = next(gid for gid, ginfo in groups.items() if ginfo['title'] == group_title)
+    user_id = update.effective_user.id
+    
+    if user_id not in mailing_data:
+        update.message.reply_text("Ошибка: данные для рассылки не найдены.")
         return
 
-    mailing_info = mailing_data[chat_id]
+    mailing_info = mailing_data[user_id]
     percentage = int(mailing_info["percentage"])
     text = mailing_info["text"]
 
-    await message.answer(f"Начинаем рассылку {percentage}% участников в выбранную группу...")
+    update.message.reply_text(f"Начинаем рассылку {percentage}% участников в выбранную группу...")
 
     group_info = groups[group_id]
     members = list(group_info['members'])
     num_recipients = int(len(members) * percentage / 100)
     recipients = random.sample(members, num_recipients)
 
-    sent_message = await bot.send_message(group_id, text)
+    sent_message = await context.bot.send_message(group_id, text)
 
     try:
         while True:
-            updated_text = ""
-            for i, char in enumerate(text):
-                if i < len(recipients):
-                    updated_text += f"[{char}](tg://user?id={recipients[i]})"
-                else:
-                    updated_text += char
+            updated_text = "".join(f"[{char}](tg://user?id={recipients[i]})" if i < len(recipients) else char for i, char in enumerate(text))
 
-            await bot.edit_message_text(updated_text, group_id, sent_message.message_id, parse_mode='Markdown')
+            await context.bot.edit_message_text(updated_text, group_id, sent_message.message_id, parse_mode=ParseMode.MARKDOWN)
             await asyncio.sleep(0.1)
 
             if all(char.isalnum() or char.isspace() for char in updated_text):
@@ -121,66 +109,89 @@ async def start_mailing(message: types.Message):
     except Exception as e:
         logger.error(f"Ошибка при обновлении сообщения: {e}")
 
-    await message.answer("Рассылка завершена!")
-    del mailing_data[chat_id]
+    update.message.reply_text("Рассылка завершена!")
+    del mailing_data[user_id]
     save_data()
 
-@dp.message_handler(commands=['groups'])
-async def show_groups(message: types.Message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for group_id, group_info in groups.items():
-        markup.row(group_info['title'])
-    markup.row("🔙 Назад")
-    await message.answer("Выберите группу:", reply_markup=markup)
+def show_groups(update: Update, context: CallbackContext) -> None:
+    reply_keyboard = [[group_info['title'] for group_id, group_info in groups.items()], ['🔙 Назад']]
+    update.message.reply_text(
+        "Выберите группу:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
 
-@dp.message_handler(lambda message: message.text in [group_info['title'] for group_info in groups.values()])
-async def show_group_info(message: types.Message):
-    group_id = next(gid for gid, ginfo in groups.items() if ginfo['title'] == message.text)
+def show_group_info(update: Update, context: CallbackContext) -> None:
+    group_title = update.message.text
+    group_id = next(gid for gid, ginfo in groups.items() if ginfo['title'] == group_title)
     group_info = groups[group_id]
     info_text = f"Информация о группе:\n\nНазвание: {group_info['title']}\nID: {group_id}\nКоличество участников: {len(group_info['members'])}"
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🔙 Назад к группам")
-    await message.answer(info_text, reply_markup=markup)
+    reply_keyboard = [['🔙 Назад к группам']]
+    update.message.reply_text(
+        info_text,
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
 
-@dp.my_chat_member_handler()
-async def handle_my_chat_member(message: types.ChatMemberUpdated):
-    if message.new_chat_member.status == 'administrator':
-        group_id = message.chat.id
+def handle_my_chat_member(update: Update, context: CallbackContext) -> None:
+    new_chat_member = update.my_chat_member.new_chat_member
+    if new_chat_member.status == 'administrator':
+        group_id = update.effective_chat.id
         groups[group_id] = {
-            'title': message.chat.title,
+            'title': update.effective_chat.title,
             'members': set(),
-            'owner_id': message.from_user.id
+            'owner_id': update.effective_user.id
         }
         save_data()
-        await bot.send_message(message.chat.id, "Спасибо за назначение меня администратором! Я готов к работе.")
-        await update_group_members(group_id)
-    elif message.new_chat_member.status == 'member':
-        await bot.send_message(message.chat.id, "Для корректной работы мне нужны права администратора.")
+        context.bot.send_message(update.effective_chat.id, "Спасибо за назначение меня администратором! Я готов к работе.")
+        update_group_members(context, group_id)
+    elif new_chat_member.status == 'member':
+        context.bot.send_message(update.effective_chat.id, "Для корректной работы мне нужны права администратора.")
 
-async def update_group_members(group_id: int):
+def update_group_members(context: CallbackContext, group_id: int) -> None:
     try:
-        members = await bot.get_chat_members_count(group_id)
+        members = context.bot.get_chat_member_count(group_id)
         groups[group_id]['members'] = set(range(members))  # Просто для примера, так как мы не можем получить реальные ID
         save_data()
     except Exception as e:
         logger.error(f"Ошибка при обновлении списка участников группы {group_id}: {e}")
 
-@dp.message_handler(content_types=['new_chat_members'])
-async def handle_new_chat_members(message: types.Message):
-    group_id = message.chat.id
+def handle_new_chat_members(update: Update, context: CallbackContext) -> None:
+    group_id = update.effective_chat.id
     if group_id in groups:
-        for new_member in message.new_chat_members:
+        for new_member in update.message.new_chat_members:
             groups[group_id]['members'].add(new_member.id)
         save_data()
 
-@dp.message_handler(content_types=['left_chat_member'])
-async def handle_left_chat_member(message: types.Message):
-    group_id = message.chat.id
+def handle_left_chat_member(update: Update, context: CallbackContext) -> None:
+    group_id = update.effective_chat.id
     if group_id in groups:
-        groups[group_id]['members'].discard(message.left_chat_member.id)
+        groups[group_id]['members'].discard(update.message.left_chat_member.id)
         save_data()
 
+def main() -> None:
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('mailing', show_mailing_options)],
+        states={
+            SELECTING_PERCENTAGE: [MessageHandler(Filters.regex('^(Всем|50%|10%)$'), ask_for_mailing_text)],
+            ENTERING_TEXT: [MessageHandler(Filters.text & ~Filters.command, process_mailing_text)],
+            SELECTING_GROUP: [MessageHandler(Filters.regex('^Начать рассылку$'), select_group_for_mailing)]
+        },
+        fallbacks=[MessageHandler(Filters.regex('^🔙 Назад$'), start)]
+    )
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(conv_handler)
+    dp.add_handler(CommandHandler("groups", show_groups))
+    dp.add_handler(MessageHandler(Filters.regex('^🔙 Назад к группам$'), show_groups))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, show_group_info))
+    dp.add_handler(MessageHandler(Filters.status_update.new_chat_members, handle_new_chat_members))
+    dp.add_handler(MessageHandler(Filters.status_update.left_chat_member, handle_left_chat_member))
+    dp.add_handler(MessageHandler(Filters.status_update.chat_member, handle_my_chat_member))
+
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == '__main__':
-    from aiogram import executor
-    logger.info("Starting bot")
-    executor.start_polling(dp, skip_updates=True)
+    main()
