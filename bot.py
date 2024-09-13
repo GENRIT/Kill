@@ -1,11 +1,12 @@
 import os
 import random
 import asyncio
-from telebot.async_telebot import AsyncTeleBot
-from telebot import types
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters import Text
 import logging
 import pickle
-from telebot.util import smart_split
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -13,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 # Инициализация бота
 TOKEN = '7305892783:AAEPYSCoF2PQuUxdTToS1zlEYvR9yZv4gjs'
-bot = AsyncTeleBot(TOKEN)
+bot = Bot(token=TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 
 # Словарь для хранения данных о группах
 groups = {}
@@ -36,15 +39,15 @@ def load_data():
 # Загрузка данных при запуске
 load_data()
 
-@bot.message_handler(commands=['start'])
-async def start(message):
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("Рассылка", callback_data="mailing"))
     markup.row(types.InlineKeyboardButton("Группы", callback_data="groups"))
-    await bot.send_message(message.chat.id, "Привет! Выберите действие:", reply_markup=markup)
+    await message.answer("Привет! Выберите действие:", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: True)
-async def callback_query(call):
+@dp.callback_query_handler(lambda c: True)
+async def callback_query(call: types.CallbackQuery):
     if call.data == "mailing":
         await show_mailing_options(call.message)
     elif call.data == "groups":
@@ -63,48 +66,53 @@ async def callback_query(call):
         group_id = int(call.data.split("_")[2])
         await start_mailing(call.message, group_id)
 
-async def show_mailing_options(message):
+async def show_mailing_options(message: types.Message):
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("Всем", callback_data="mailing_100"))
     markup.row(types.InlineKeyboardButton("50%", callback_data="mailing_50"))
     markup.row(types.InlineKeyboardButton("10%", callback_data="mailing_10"))
     markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await bot.edit_message_text("Выберите получателей рассылки:", message.chat.id, message.message_id, reply_markup=markup)
+    await message.edit_text("Выберите получателей рассылки:", reply_markup=markup)
 
-async def ask_for_mailing_text(message, percentage):
-    await bot.edit_message_text(f"Введите текст для рассылки {percentage}% участников:", message.chat.id, message.message_id)
-    bot.register_next_step_handler(message, process_mailing_text, percentage)
+async def ask_for_mailing_text(message: types.Message, percentage: str):
+    await message.edit_text(f"Введите текст для рассылки {percentage}% участников:")
+    await dp.current_state(user=message.chat.id).set_state('waiting_for_mailing_text')
+    await dp.current_state(user=message.chat.id).update_data(percentage=percentage)
 
-async def process_mailing_text(message, percentage):
+@dp.message_handler(state='waiting_for_mailing_text')
+async def process_mailing_text(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        percentage = data['percentage']
     mailing_text = message.text
     mailing_data[message.chat.id] = {"text": mailing_text, "percentage": percentage}
     save_data()
+    await state.finish()
     await show_mailing_actions(message)
 
-async def show_mailing_actions(message):
+async def show_mailing_actions(message: types.Message):
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data="start_mailing"))
     markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+    await message.answer("Выберите действие:", reply_markup=markup)
 
-async def select_group_for_mailing(message):
+async def select_group_for_mailing(message: types.Message):
     markup = types.InlineKeyboardMarkup()
     for group_id, group_info in groups.items():
         markup.row(types.InlineKeyboardButton(group_info['title'], callback_data=f"select_group_{group_id}"))
     markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await bot.edit_message_text("Выберите группу для рассылки:", message.chat.id, message.message_id, reply_markup=markup)
+    await message.edit_text("Выберите группу для рассылки:", reply_markup=markup)
 
-async def start_mailing(message, group_id):
+async def start_mailing(message: types.Message, group_id: int):
     chat_id = message.chat.id
     if chat_id not in mailing_data:
-        await bot.send_message(chat_id, "Ошибка: данные для рассылки не найдены.")
+        await message.answer("Ошибка: данные для рассылки не найдены.")
         return
 
     mailing_info = mailing_data[chat_id]
     percentage = int(mailing_info["percentage"])
     text = mailing_info["text"]
 
-    await bot.send_message(chat_id, f"Начинаем рассылку {percentage}% участников в выбранную группу...")
+    await message.answer(f"Начинаем рассылку {percentage}% участников в выбранную группу...")
 
     group_info = groups[group_id]
     members = list(group_info['members'])
@@ -112,7 +120,7 @@ async def start_mailing(message, group_id):
     recipients = random.sample(members, num_recipients)
 
     sent_message = await bot.send_message(group_id, text)
-    
+
     try:
         while True:
             updated_text = ""
@@ -121,35 +129,35 @@ async def start_mailing(message, group_id):
                     updated_text += f"[{char}](tg://user?id={recipients[i]})"
                 else:
                     updated_text += char
-            
+
             await bot.edit_message_text(updated_text, group_id, sent_message.message_id, parse_mode='Markdown')
             await asyncio.sleep(0.1)
-            
+
             if all(char.isalnum() or char.isspace() for char in updated_text):
                 break
     except Exception as e:
         logger.error(f"Ошибка при обновлении сообщения: {e}")
 
-    await bot.send_message(chat_id, "Рассылка завершена!")
+    await message.answer("Рассылка завершена!")
     del mailing_data[chat_id]
     save_data()
 
-async def show_groups(message):
+async def show_groups(message: types.Message):
     markup = types.InlineKeyboardMarkup()
     for group_id, group_info in groups.items():
         markup.row(types.InlineKeyboardButton(group_info['title'], callback_data=f"group_{group_id}"))
     markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    await bot.edit_message_text("Выберите группу:", message.chat.id, message.message_id, reply_markup=markup)
+    await message.edit_text("Выберите группу:", reply_markup=markup)
 
-async def show_group_info(message, group_id):
+async def show_group_info(message: types.Message, group_id: int):
     group_info = groups[group_id]
     info_text = f"Информация о группе:\n\nНазвание: {group_info['title']}\nID: {group_id}\nКоличество участников: {len(group_info['members'])}"
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("🔙 Назад к группам", callback_data="groups"))
-    await bot.edit_message_text(info_text, message.chat.id, message.message_id, reply_markup=markup)
+    await message.edit_text(info_text, reply_markup=markup)
 
-@bot.my_chat_member_handler()
-async def handle_my_chat_member(message):
+@dp.my_chat_member_handler()
+async def handle_my_chat_member(message: types.ChatMemberUpdated):
     if message.new_chat_member.status == 'administrator':
         group_id = message.chat.id
         groups[group_id] = {
@@ -163,7 +171,7 @@ async def handle_my_chat_member(message):
     elif message.new_chat_member.status == 'member':
         await bot.send_message(message.chat.id, "Для корректной работы мне нужны права администратора.")
 
-async def update_group_members(group_id):
+async def update_group_members(group_id: int):
     try:
         members = await bot.get_chat_members_count(group_id)
         groups[group_id]['members'] = set(range(members))  # Просто для примера, так как мы не можем получить реальные ID
@@ -171,20 +179,21 @@ async def update_group_members(group_id):
     except Exception as e:
         logger.error(f"Ошибка при обновлении списка участников группы {group_id}: {e}")
 
-@bot.message_handler(content_types=['new_chat_members'])
-async def handle_new_chat_members(message):
+@dp.message_handler(content_types=['new_chat_members'])
+async def handle_new_chat_members(message: types.Message):
     group_id = message.chat.id
     if group_id in groups:
         for new_member in message.new_chat_members:
             groups[group_id]['members'].add(new_member.id)
         save_data()
 
-@bot.message_handler(content_types=['left_chat_member'])
-async def handle_left_chat_member(message):
+@dp.message_handler(content_types=['left_chat_member'])
+async def handle_left_chat_member(message: types.Message):
     group_id = message.chat.id
     if group_id in groups:
         groups[group_id]['members'].discard(message.left_chat_member.id)
         save_data()
 
 if __name__ == '__main__':
-    asyncio.run(bot.polling())
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
