@@ -15,6 +15,9 @@ bot = TeleBot(TOKEN)
 # Словарь для хранения данных о группах
 groups = {}
 
+# Словарь для хранения данных о рассылке
+mailing_data = {}
+
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.InlineKeyboardMarkup()
@@ -36,6 +39,8 @@ def callback_query(call):
     elif call.data.startswith("group_"):
         group_id = int(call.data.split("_")[1])
         show_group_info(call.message, group_id)
+    elif call.data == "add_media":
+        ask_for_media(call.message)
 
 def show_mailing_options(message):
     markup = types.InlineKeyboardMarkup()
@@ -51,54 +56,92 @@ def ask_for_mailing_text(message, percentage):
 
 def process_mailing_text(message, percentage):
     mailing_text = message.text
+    mailing_data[message.chat.id] = {"text": mailing_text, "percentage": percentage}
     markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data=f"add_button_{percentage}"))
-    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data=f"start_mailing_{percentage}"))
+    markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data=f"add_button"))
+    markup.row(types.InlineKeyboardButton("Добавить медиа", callback_data="add_media"))
+    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data=f"start_mailing"))
     bot.send_message(message.chat.id, "Текст рассылки получен. Выберите действие:", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("add_button_"))
+@bot.callback_query_handler(func=lambda call: call.data == "add_button")
 def add_button_to_mailing(call):
-    percentage = call.data.split("_")[2]
     bot.edit_message_text("Введите текст для кнопки и ссылку в формате 'текст|ссылка':", call.message.chat.id, call.message.message_id)
-    bot.register_next_step_handler(call.message, process_button_info, percentage)
+    bot.register_next_step_handler(call.message, process_button_info)
 
-def process_button_info(message, percentage):
+def process_button_info(message):
     try:
         button_text, button_url = message.text.split("|")
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton(text=button_text.strip(), url=button_url.strip()))
-        bot.send_message(message.chat.id, "Кнопка добавлена. Начинаем рассылку?", reply_markup=markup)
-        bot.register_next_step_handler(message, start_mailing_with_button, percentage, markup)
+        mailing_data[message.chat.id]["markup"] = markup
+        bot.send_message(message.chat.id, "Кнопка добавлена. Выберите дальнейшее действие:", reply_markup=get_mailing_markup())
     except ValueError:
         bot.send_message(message.chat.id, "Неверный формат. Попробуйте еще раз.")
-        add_button_to_mailing(types.CallbackQuery(data=f"add_button_{percentage}", message=message))
+        add_button_to_mailing(types.CallbackQuery(data="add_button", message=message))
 
-def start_mailing_with_button(message, percentage, markup):
-    if message.text.lower() == "да":
-        start_mailing(message, percentage, markup)
+def ask_for_media(message):
+    bot.edit_message_text("Отправьте изображение, GIF или видео для добавления к рассылке:", message.chat.id, message.message_id)
+    bot.register_next_step_handler(message, process_media)
+
+def process_media(message):
+    if message.content_type in ['photo', 'video', 'animation']:
+        if message.content_type == 'photo':
+            mailing_data[message.chat.id]["media"] = message.photo[-1].file_id
+        elif message.content_type == 'video':
+            mailing_data[message.chat.id]["media"] = message.video.file_id
+        elif message.content_type == 'animation':
+            mailing_data[message.chat.id]["media"] = message.animation.file_id
+        bot.send_message(message.chat.id, "Медиа добавлено к рассылке. Выберите дальнейшее действие:", reply_markup=get_mailing_markup())
     else:
-        bot.send_message(message.chat.id, "Рассылка отменена.")
+        bot.send_message(message.chat.id, "Пожалуйста, отправьте изображение, GIF или видео.")
+        ask_for_media(message)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("start_mailing_"))
+def get_mailing_markup():
+    markup = types.InlineKeyboardMarkup()
+    markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data="add_button"))
+    markup.row(types.InlineKeyboardButton("Добавить медиа", callback_data="add_media"))
+    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data="start_mailing"))
+    return markup
+
+@bot.callback_query_handler(func=lambda call: call.data == "start_mailing")
 def start_mailing_callback(call):
-    percentage = call.data.split("_")[2]
-    start_mailing(call.message, percentage)
+    start_mailing(call.message)
 
-def start_mailing(message, percentage, markup=None):
-    bot.send_message(message.chat.id, f"Начинаем рассылку {percentage}% участников...")
+def start_mailing(message):
+    chat_id = message.chat.id
+    if chat_id not in mailing_data:
+        bot.send_message(chat_id, "Ошибка: данные для рассылки не найдены.")
+        return
+
+    mailing_info = mailing_data[chat_id]
+    percentage = int(mailing_info["percentage"])
+    text = mailing_info["text"]
+    markup = mailing_info.get("markup")
+    media = mailing_info.get("media")
+
+    bot.send_message(chat_id, f"Начинаем рассылку {percentage}% участников...")
+    
     for group_id, group_info in groups.items():
         members = list(group_info['members'])
-        num_recipients = int(len(members) * int(percentage) / 100)
+        num_recipients = int(len(members) * percentage / 100)
         recipients = random.sample(members, num_recipients)
+        
         for user_id in recipients:
             try:
-                if markup:
-                    bot.send_message(user_id, f"Рассылка: Привет, участник группы {group_info['title']}! Ваш ID: {user_id}", reply_markup=markup)
+                if media:
+                    if "photo" in media:
+                        bot.send_photo(user_id, media, caption=text, reply_markup=markup)
+                    elif "video" in media:
+                        bot.send_video(user_id, media, caption=text, reply_markup=markup)
+                    elif "animation" in media:
+                        bot.send_animation(user_id, media, caption=text, reply_markup=markup)
                 else:
-                    bot.send_message(user_id, f"Рассылка: Привет, участник группы {group_info['title']}! Ваш ID: {user_id}")
+                    bot.send_message(user_id, text, reply_markup=markup)
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
-    bot.send_message(message.chat.id, "Рассылка завершена!")
+
+    bot.send_message(chat_id, "Рассылка завершена!")
+    del mailing_data[chat_id]
 
 def show_groups(message):
     markup = types.InlineKeyboardMarkup()
@@ -138,8 +181,16 @@ def handle_my_chat_member(message):
             'owner_id': message.from_user.id
         }
         bot.send_message(message.chat.id, "Спасибо за назначение меня администратором! Я готов к работе.")
+        update_group_members(group_id)
     elif message.new_chat_member.status == 'member':
         bot.send_message(message.chat.id, "Для корректной работы мне нужны права администратора.")
+
+def update_group_members(group_id):
+    try:
+        members = bot.get_chat_members_count(group_id)
+        groups[group_id]['members'] = set(range(members))  # Просто для примера, так как мы не можем получить реальные ID
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении списка участников группы {group_id}: {e}")
 
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_chat_members(message):
