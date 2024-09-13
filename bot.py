@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота
-TOKEN = os.environ.get('7305892783:AAEPYSCoF2PQuUxdTToS1zlEYvR9yZv4gjs')
+TOKEN = '7305892783:AAEPYSCoF2PQuUxdTToS1zlEYvR9yZv4gjs'
 bot = TeleBot(TOKEN)
 
 # Словарь для хранения данных о группах
