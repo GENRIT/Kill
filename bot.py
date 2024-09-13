@@ -5,6 +5,7 @@ from telebot.async_telebot import AsyncTeleBot
 from telebot import types
 import logging
 import pickle
+from telebot.util import smart_split
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -112,26 +113,23 @@ async def start_mailing(message, group_id):
 
     sent_message = await bot.send_message(group_id, text)
     
-    while True:
-        for i, user_id in enumerate(recipients):
+    try:
+        while True:
             updated_text = ""
-            for j, char in enumerate(text):
-                if j < len(recipients):
-                    updated_text += f"[{char}](tg://user?id={recipients[j]})"
+            for i, char in enumerate(text):
+                if i < len(recipients):
+                    updated_text += f"[{char}](tg://user?id={recipients[i]})"
                 else:
                     updated_text += char
             
-            try:
-                await bot.edit_message_text(updated_text, group_id, sent_message.message_id, parse_mode='Markdown')
-            except Exception as e:
-                logger.error(f"Ошибка при обновлении сообщения в группе {group_id}: {e}")
-            
+            await bot.edit_message_text(updated_text, group_id, sent_message.message_id, parse_mode='Markdown')
             await asyncio.sleep(0.1)
-        
-        if i == len(recipients) - 1:
-            break
-    
-    await bot.edit_message_text(text, group_id, sent_message.message_id)
+            
+            if all(char.isalnum() or char.isspace() for char in updated_text):
+                break
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении сообщения: {e}")
+
     await bot.send_message(chat_id, "Рассылка завершена!")
     del mailing_data[chat_id]
     save_data()
