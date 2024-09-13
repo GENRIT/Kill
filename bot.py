@@ -41,6 +41,12 @@ def callback_query(call):
         show_group_info(call.message, group_id)
     elif call.data == "add_media":
         ask_for_media(call.message)
+    elif call.data == "add_button":
+        add_button_to_mailing(call)
+    elif call.data == "start_mailing":
+        start_mailing(call.message)
+    elif call.data == "preview_post":
+        preview_post(call.message)
 
 def show_mailing_options(message):
     markup = types.InlineKeyboardMarkup()
@@ -57,14 +63,19 @@ def ask_for_mailing_text(message, percentage):
 def process_mailing_text(message, percentage):
     mailing_text = message.text
     mailing_data[message.chat.id] = {"text": mailing_text, "percentage": percentage}
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data=f"add_button"))
-    markup.row(types.InlineKeyboardButton("Добавить медиа", callback_data="add_media"))
-    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data=f"start_mailing"))
-    bot.send_message(message.chat.id, "Текст рассылки получен. Выберите действие:", reply_markup=markup)
+    show_mailing_actions(message)
 
-@bot.callback_query_handler(func=lambda call: call.data == "add_button")
+def show_mailing_actions(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data="add_button"))
+    markup.row(types.InlineKeyboardButton("Добавить медиа", callback_data="add_media"))
+    markup.row(types.InlineKeyboardButton("Предпросмотр", callback_data="preview_post"))
+    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data="start_mailing"))
+    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+    bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+
 def add_button_to_mailing(call):
+    bot.answer_callback_query(call.id)
     bot.edit_message_text("Введите текст для кнопки и ссылку в формате 'текст|ссылка':", call.message.chat.id, call.message.message_id)
     bot.register_next_step_handler(call.message, process_button_info)
 
@@ -74,38 +85,70 @@ def process_button_info(message):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton(text=button_text.strip(), url=button_url.strip()))
         mailing_data[message.chat.id]["markup"] = markup
-        bot.send_message(message.chat.id, "Кнопка добавлена. Выберите дальнейшее действие:", reply_markup=get_mailing_markup())
+        bot.send_message(message.chat.id, "Кнопка добавлена.")
+        show_mailing_actions(message)
     except ValueError:
         bot.send_message(message.chat.id, "Неверный формат. Попробуйте еще раз.")
-        add_button_to_mailing(types.CallbackQuery(data="add_button", message=message))
+        add_button_to_mailing(types.CallbackQuery(id="dummy", from_user=message.from_user, message=message, data="add_button"))
 
 def ask_for_media(message):
-    bot.edit_message_text("Отправьте изображение, GIF или видео для добавления к рассылке:", message.chat.id, message.message_id)
-    bot.register_next_step_handler(message, process_media)
+    markup = types.InlineKeyboardMarkup()
+    markup.row(types.InlineKeyboardButton("Фото", callback_data="media_photo"))
+    markup.row(types.InlineKeyboardButton("Видео", callback_data="media_video"))
+    markup.row(types.InlineKeyboardButton("GIF", callback_data="media_gif"))
+    markup.row(types.InlineKeyboardButton("Стикер", callback_data="media_sticker"))
+    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_mailing"))
+    bot.edit_message_text("Выберите тип медиа для добавления:", message.chat.id, message.message_id, reply_markup=markup)
 
-def process_media(message):
-    if message.content_type in ['photo', 'video', 'animation']:
-        if message.content_type == 'photo':
+@bot.callback_query_handler(func=lambda call: call.data.startswith("media_"))
+def handle_media_type(call):
+    media_type = call.data.split("_")[1]
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text(f"Отправьте {media_type} для добавления к рассылке:", call.message.chat.id, call.message.message_id)
+    bot.register_next_step_handler(call.message, process_media, media_type)
+
+def process_media(message, media_type):
+    if message.content_type == media_type or (media_type == 'gif' and message.content_type == 'document'):
+        if media_type == 'photo':
             mailing_data[message.chat.id]["media"] = message.photo[-1].file_id
-        elif message.content_type == 'video':
+        elif media_type == 'video':
             mailing_data[message.chat.id]["media"] = message.video.file_id
-        elif message.content_type == 'animation':
-            mailing_data[message.chat.id]["media"] = message.animation.file_id
-        bot.send_message(message.chat.id, "Медиа добавлено к рассылке. Выберите дальнейшее действие:", reply_markup=get_mailing_markup())
+        elif media_type == 'gif':
+            mailing_data[message.chat.id]["media"] = message.document.file_id
+        elif media_type == 'sticker':
+            mailing_data[message.chat.id]["media"] = message.sticker.file_id
+        bot.send_message(message.chat.id, f"{media_type.capitalize()} добавлен к рассылке.")
+        show_mailing_actions(message)
     else:
-        bot.send_message(message.chat.id, "Пожалуйста, отправьте изображение, GIF или видео.")
+        bot.send_message(message.chat.id, f"Пожалуйста, отправьте {media_type}.")
         ask_for_media(message)
 
-def get_mailing_markup():
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("Добавить кнопку с ссылкой", callback_data="add_button"))
-    markup.row(types.InlineKeyboardButton("Добавить медиа", callback_data="add_media"))
-    markup.row(types.InlineKeyboardButton("Начать рассылку", callback_data="start_mailing"))
-    return markup
+def preview_post(message):
+    chat_id = message.chat.id
+    if chat_id not in mailing_data:
+        bot.send_message(chat_id, "Ошибка: данные для рассылки не найдены.")
+        return
 
-@bot.callback_query_handler(func=lambda call: call.data == "start_mailing")
-def start_mailing_callback(call):
-    start_mailing(call.message)
+    mailing_info = mailing_data[chat_id]
+    text = mailing_info["text"]
+    markup = mailing_info.get("markup")
+    media = mailing_info.get("media")
+
+    if media:
+        if "photo" in media:
+            bot.send_photo(chat_id, media, caption=text, reply_markup=markup)
+        elif "video" in media:
+            bot.send_video(chat_id, media, caption=text, reply_markup=markup)
+        elif "animation" in media:
+            bot.send_animation(chat_id, media, caption=text, reply_markup=markup)
+        elif "sticker" in media:
+            bot.send_sticker(chat_id, media)
+            if text or markup:
+                bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+    show_mailing_actions(message)
 
 def start_mailing(message):
     chat_id = message.chat.id
@@ -120,23 +163,30 @@ def start_mailing(message):
     media = mailing_info.get("media")
 
     bot.send_message(chat_id, f"Начинаем рассылку {percentage}% участников...")
-    
+
     for group_id, group_info in groups.items():
         members = list(group_info['members'])
         num_recipients = int(len(members) * percentage / 100)
         recipients = random.sample(members, num_recipients)
-        
+
         for user_id in recipients:
             try:
+                mention = f"[{user_id}](tg://user?id={user_id})"
+                personalized_text = f"{mention}\n\n{text}"
+                
                 if media:
                     if "photo" in media:
-                        bot.send_photo(user_id, media, caption=text, reply_markup=markup)
+                        bot.send_photo(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
                     elif "video" in media:
-                        bot.send_video(user_id, media, caption=text, reply_markup=markup)
+                        bot.send_video(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
                     elif "animation" in media:
-                        bot.send_animation(user_id, media, caption=text, reply_markup=markup)
+                        bot.send_animation(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
+                    elif "sticker" in media:
+                        bot.send_sticker(user_id, media)
+                        if personalized_text or markup:
+                            bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
                 else:
-                    bot.send_message(user_id, text, reply_markup=markup)
+                    bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
 
