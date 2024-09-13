@@ -3,6 +3,7 @@ import random
 from telebot import TeleBot, types
 from telebot.util import smart_split
 import logging
+import pickle
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +18,21 @@ groups = {}
 
 # Словарь для хранения данных о рассылке
 mailing_data = {}
+
+# Функция для сохранения данных
+def save_data():
+    with open('bot_data.pkl', 'wb') as f:
+        pickle.dump((groups, mailing_data), f)
+
+# Функция для загрузки данных
+def load_data():
+    global groups, mailing_data
+    if os.path.exists('bot_data.pkl'):
+        with open('bot_data.pkl', 'rb') as f:
+            groups, mailing_data = pickle.load(f)
+
+# Загрузка данных при запуске
+load_data()
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -44,9 +60,12 @@ def callback_query(call):
     elif call.data == "add_button":
         add_button_to_mailing(call)
     elif call.data == "start_mailing":
-        start_mailing(call.message)
+        select_group_for_mailing(call.message)
     elif call.data == "preview_post":
         preview_post(call.message)
+    elif call.data.startswith("select_group_"):
+        group_id = int(call.data.split("_")[2])
+        start_mailing(call.message, group_id)
 
 def show_mailing_options(message):
     markup = types.InlineKeyboardMarkup()
@@ -63,6 +82,7 @@ def ask_for_mailing_text(message, percentage):
 def process_mailing_text(message, percentage):
     mailing_text = message.text
     mailing_data[message.chat.id] = {"text": mailing_text, "percentage": percentage}
+    save_data()
     show_mailing_actions(message)
 
 def show_mailing_actions(message):
@@ -85,6 +105,7 @@ def process_button_info(message):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton(text=button_text.strip(), url=button_url.strip()))
         mailing_data[message.chat.id]["markup"] = markup
+        save_data()
         bot.send_message(message.chat.id, "Кнопка добавлена.")
         show_mailing_actions(message)
     except ValueError:
@@ -117,6 +138,7 @@ def process_media(message, media_type):
             mailing_data[message.chat.id]["media"] = message.document.file_id
         elif media_type == 'sticker':
             mailing_data[message.chat.id]["media"] = message.sticker.file_id
+        save_data()
         bot.send_message(message.chat.id, f"{media_type.capitalize()} добавлен к рассылке.")
         show_mailing_actions(message)
     else:
@@ -150,7 +172,14 @@ def preview_post(message):
 
     show_mailing_actions(message)
 
-def start_mailing(message):
+def select_group_for_mailing(message):
+    markup = types.InlineKeyboardMarkup()
+    for group_id, group_info in groups.items():
+        markup.row(types.InlineKeyboardButton(group_info['title'], callback_data=f"select_group_{group_id}"))
+    markup.row(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+    bot.edit_message_text("Выберите группу для рассылки:", message.chat.id, message.message_id, reply_markup=markup)
+
+def start_mailing(message, group_id):
     chat_id = message.chat.id
     if chat_id not in mailing_data:
         bot.send_message(chat_id, "Ошибка: данные для рассылки не найдены.")
@@ -162,36 +191,37 @@ def start_mailing(message):
     markup = mailing_info.get("markup")
     media = mailing_info.get("media")
 
-    bot.send_message(chat_id, f"Начинаем рассылку {percentage}% участников...")
+    bot.send_message(chat_id, f"Начинаем рассылку {percentage}% участников в выбранную группу...")
 
-    for group_id, group_info in groups.items():
-        members = list(group_info['members'])
-        num_recipients = int(len(members) * percentage / 100)
-        recipients = random.sample(members, num_recipients)
+    group_info = groups[group_id]
+    members = list(group_info['members'])
+    num_recipients = int(len(members) * percentage / 100)
+    recipients = random.sample(members, num_recipients)
 
-        for user_id in recipients:
-            try:
-                mention = f"[{user_id}](tg://user?id={user_id})"
-                personalized_text = f"{mention}\n\n{text}"
-                
-                if media:
-                    if "photo" in media:
-                        bot.send_photo(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
-                    elif "video" in media:
-                        bot.send_video(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
-                    elif "animation" in media:
-                        bot.send_animation(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
-                    elif "sticker" in media:
-                        bot.send_sticker(user_id, media)
-                        if personalized_text or markup:
-                            bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
-                else:
-                    bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
-            except Exception as e:
-                logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
+    for user_id in recipients:
+        try:
+            mention = f"[{user_id}](tg://user?id={user_id})"
+            personalized_text = f"{mention}\n\n{text}"
+
+            if media:
+                if "photo" in media:
+                    bot.send_photo(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
+                elif "video" in media:
+                    bot.send_video(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
+                elif "animation" in media:
+                    bot.send_animation(user_id, media, caption=personalized_text, reply_markup=markup, parse_mode='Markdown')
+                elif "sticker" in media:
+                    bot.send_sticker(user_id, media)
+                    if personalized_text or markup:
+                        bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
+            else:
+                bot.send_message(user_id, personalized_text, reply_markup=markup, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
 
     bot.send_message(chat_id, "Рассылка завершена!")
     del mailing_data[chat_id]
+    save_data()
 
 def show_groups(message):
     markup = types.InlineKeyboardMarkup()
@@ -230,6 +260,7 @@ def handle_my_chat_member(message):
             'members': set(),
             'owner_id': message.from_user.id
         }
+        save_data()
         bot.send_message(message.chat.id, "Спасибо за назначение меня администратором! Я готов к работе.")
         update_group_members(group_id)
     elif message.new_chat_member.status == 'member':
@@ -239,6 +270,7 @@ def update_group_members(group_id):
     try:
         members = bot.get_chat_members_count(group_id)
         groups[group_id]['members'] = set(range(members))  # Просто для примера, так как мы не можем получить реальные ID
+        save_data()
     except Exception as e:
         logger.error(f"Ошибка при обновлении списка участников группы {group_id}: {e}")
 
@@ -248,12 +280,14 @@ def handle_new_chat_members(message):
     if group_id in groups:
         for new_member in message.new_chat_members:
             groups[group_id]['members'].add(new_member.id)
+        save_data()
 
 @bot.message_handler(content_types=['left_chat_member'])
 def handle_left_chat_member(message):
     group_id = message.chat.id
     if group_id in groups:
         groups[group_id]['members'].discard(message.left_chat_member.id)
+        save_data()
 
 if __name__ == '__main__':
     bot.polling(none_stop=True)
