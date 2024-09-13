@@ -199,19 +199,21 @@ def start_mailing(message, group_id):
 
     for user_id in recipients:
         try:
+            # Добавляем ID пользователя в текст сообщения
+            user_text = f"{text}\n\n{user_id}"
             if media:
                 if "photo" in media:
-                    bot.send_photo(group_id, media, caption=text, reply_markup=markup)
+                    bot.send_photo(group_id, media, caption=user_text, reply_markup=markup)
                 elif "video" in media:
-                    bot.send_video(group_id, media, caption=text, reply_markup=markup)
+                    bot.send_video(group_id, media, caption=user_text, reply_markup=markup)
                 elif "animation" in media:
-                    bot.send_animation(group_id, media, caption=text, reply_markup=markup)
+                    bot.send_animation(group_id, media, caption=user_text, reply_markup=markup)
                 elif "sticker" in media:
                     bot.send_sticker(group_id, media)
-                    if text or markup:
-                        bot.send_message(group_id, text, reply_markup=markup)
+                    if user_text or markup:
+                        bot.send_message(group_id, user_text, reply_markup=markup)
             else:
-                bot.send_message(group_id, text, reply_markup=markup)
+                bot.send_message(group_id, user_text, reply_markup=markup)
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения в группу {group_id}: {e}")
 
