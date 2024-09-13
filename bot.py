@@ -9,7 +9,7 @@ import logging
 import pickle
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота
@@ -41,13 +41,16 @@ load_data()
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
+    logger.debug("Received /start command")
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton("Рассылка", callback_data="mailing"))
     markup.row(types.InlineKeyboardButton("Группы", callback_data="groups"))
     await message.answer("Привет! Выберите действие:", reply_markup=markup)
+    logger.debug("Sent start message with markup")
 
 @dp.callback_query_handler(lambda c: True)
 async def callback_query(call: types.CallbackQuery):
+    logger.debug(f"Received callback query with data: {call.data}")
     if call.data == "mailing":
         await show_mailing_options(call.message)
     elif call.data == "groups":
@@ -196,4 +199,5 @@ async def handle_left_chat_member(message: types.Message):
 
 if __name__ == '__main__':
     from aiogram import executor
+    logger.info("Starting bot")
     executor.start_polling(dp, skip_updates=True)
