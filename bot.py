@@ -1,10 +1,14 @@
-from aiogram import Bot, Dispatcher, executor, types
+import telebot
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 import time
+from flask import Flask
 
 # Замените на ваш токен Telegram бота
 TOKEN = '7332817569:AAG3l2IJugs0geomZCaT9k-YoVcwBXcHAgs'
@@ -12,20 +16,22 @@ TOKEN = '7332817569:AAG3l2IJugs0geomZCaT9k-YoVcwBXcHAgs'
 # URL сайта с ChatGPT (замените на нужный URL)
 CHATGPT_URL = 'https://ChatGPT.com/chat'
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+bot = telebot.TeleBot(TOKEN)
 
-# Инициализация драйвера Selenium
-driver = webdriver.Chrome()  # Убедитесь, что у вас установлен ChromeDriver
+# Инициализация драйвера Selenium с использованием webdriver-manager
+chrome_options = Options()
+chrome_options.add_argument("--headless")  # Запуск Chrome в фоновом режиме
+service = Service(ChromeDriverManager().install())
+driver = webdriver.Chrome(service=service, options=chrome_options)
 
-@dp.message_handler(commands=['start', 'help'])
-async def send_welcome(message: types.Message):
-    await message.reply("Привет! чем могу помочь?")
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, "Привет! чем могу помочь?")
 
-@dp.message_handler()
-async def echo_all(message: types.Message):
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
     response = send_to_chatgpt(message.text)
-    await message.reply(response)
+    bot.reply_to(message, response)
 
 def send_to_chatgpt(message):
     try:
@@ -51,7 +57,19 @@ def send_to_chatgpt(message):
 
         return response
     except Exception as e:
-        return f"Мне очень мало, но мне закрыли рот: {str(e)}"
+        return f"Произошла ошибка при обращении к ChatGPT: {str(e)}"
+
+# Создаем экземпляр Flask приложения
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Telegram Bot is running!"
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    # Запускаем Flask приложение в отдельном потоке
+    import threading
+    threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': 80, 'debug': True, 'use_reloader': False}).start()
+
+    # Запускаем бота
+    bot.polling(none_stop=True)
