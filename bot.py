@@ -7,7 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import time
 
 # Замените на ваш токен Telegram бота
-TOKEN = 'ваш_токен_telegram_бота'
+TOKEN = '7332817569:AAG3l2IJugs0geomZCaT9k-YoVcwBXcHAgs'
 
 # URL сайта с ChatGPT (замените на нужный URL)
 CHATGPT_URL = 'https://ChatGPT.com/chat'
