@@ -1,37 +1,56 @@
-from flask import Flask, render_template, request, jsonify
+import telebot
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 
-app = Flask(__name__)
+# Замените на ваш токен Telegram бота
+TOKEN = 'ваш_токен_telegram_бота'
 
-# Настройка Selenium
-chrome_options = Options()
-chrome_options.add_argument("--headless")
+# URL сайта с ChatGPT (замените на нужный URL)
+CHATGPT_URL = 'https://ChatGPT.com/chat'
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+bot = telebot.TeleBot(TOKEN)
 
-@app.route('/search', methods=['POST'])
-def search():
-    query = request.form['query']
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.get(f"https://yandex.ru/search/?text={query}")
+# Инициализация драйвера Selenium
+driver = webdriver.Chrome()  # Убедитесь, что у вас установлен ChromeDriver
 
-    results = []
-    for i in range(15):
-        try:
-            result = driver.find_elements(By.CSS_SELECTOR, '.serp-item')[i]
-            title = result.find_element(By.CSS_SELECTOR, '.organic__url-text').text
-            link = result.find_element(By.CSS_SELECTOR, '.path__item').get_attribute('href')
-            results.append({'title': title, 'link': link})
-        except:
-            break
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, "Привет! чем могу помочь?")
 
-    driver.quit()
-    return jsonify(results)
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    response = send_to_chatgpt(message.text)
+    bot.reply_to(message, response)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+def send_to_chatgpt(message):
+    try:
+        # Открываем страницу ChatGPT
+        driver.get(CHATGPT_URL)
+        
+        # Ждем, пока не появится поле ввода
+        input_box = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//textarea[contains(@placeholder, 'Сообщить ChatGPT')]"))
+        )
+        
+        # Вводим сообщение
+        input_box.send_keys(message)
+        input_box.send_keys(Keys.RETURN)
+        
+        # Ждем ответа от ChatGPT
+        response_element = WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'chatgpt-response')]"))
+        )
+        
+        # Получаем текст ответа
+        response = response_element.text
+        
+        return response
+    except Exception as e:
+        return f"Мне очень мало, но мне закрыли рот: {str(e)}"
+
+# Запускаем бота
+bot.polling()
